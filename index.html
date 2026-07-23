@@ -21,7 +21,6 @@
     padding: 20px;
   }
   
-  /* Perbaikan container reader agar tidak konflik ukuran */
   #reader { 
     width: 100%; 
     max-width: 500px; 
@@ -36,8 +35,7 @@
     height: 100% !important; 
     object-fit: cover !important; 
   }
-  #reader__dashboard { padding: 10px; background: var(--panel); color: var(--text); }
-  #reader__dashboard button { background: var(--accent-dim); color: #fff; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
+  #reader__dashboard { padding: 10px; background: var(--panel); color: var(--text); font-size: 12px; }
 
   #flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; transition: opacity 120ms ease-out; z-index: 10; }
   #flash.on { opacity: 0.85; transition: none; }
@@ -56,7 +54,7 @@
   #statusText { font-size: 14px; font-weight: 500; }
   #statusSub { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
 
-  select, button { font-family: inherit; font-size: 13px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: #1d2129; color: var(--text); cursor: pointer; }
+  select, button { font-family: inherit; font-size: 13px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: #1d2129; color: var(--text); cursor: pointer; width: 100%; }
   button.primary { background: var(--accent-dim); border-color: var(--accent); color: #fff; font-weight: 600; }
   button.primary:hover { background: var(--accent); }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -93,19 +91,21 @@
       <div class="status-row">
         <div id="statusDot" class="dot searching"></div>
         <div>
-          <div id="statusText">Arahkan barcode ke kamera...</div>
-          <div id="statusSub">Tekan "Mulai Kamera" untuk aktifkan</div>
+          <div id="statusText">Pilih kamera lalu klik mulai...</div>
+          <div id="statusSub">Sistem siap memindai</div>
         </div>
       </div>
     </div>
 
-    <label class="field" style="display:none;">
-      Kamera
-      <select id="cameraSelect"></select>
+    <label class="field">
+      Pilih Kamera
+      <select id="cameraSelect">
+        <option value="">Memuat daftar kamera...</option>
+      </select>
     </label>
 
     <div style="display:flex; gap:8px;">
-      <button id="startBtn" class="primary" style="flex:1;">Mulai Kamera</button>
+      <button id="startBtn" class="primary">Mulai Kamera</button>
     </div>
 
     <div class="status-card" style="display:flex; justify-content:space-between; align-items:center;">
@@ -133,6 +133,7 @@
   const statusDot = document.getElementById('statusDot');
   const statusText = document.getElementById('statusText');
   const statusSub = document.getElementById('statusSub');
+  const cameraSelect = document.getElementById('cameraSelect');
   const startBtn = document.getElementById('startBtn');
   const countEl = document.getElementById('count');
   const logEl = document.getElementById('log');
@@ -169,6 +170,25 @@
     });
   }
 
+  async function getCameras() {
+    try {
+      const devices = await Html5Qrcode.getCameras();
+      cameraSelect.innerHTML = '';
+      if (devices && devices.length) {
+        devices.forEach((device, index) => {
+          const opt = document.createElement('option');
+          opt.value = device.id;
+          opt.textContent = device.label || `Kamera ${index + 1}`;
+          cameraSelect.appendChild(opt);
+        });
+      } else {
+        cameraSelect.innerHTML = '<option value="">Tidak ada kamera ditemukan</option>';
+      }
+    } catch (e) {
+      cameraSelect.innerHTML = '<option value="">Izin kamera ditolak / tidak tersedia</option>';
+    }
+  }
+
   async function startScanner() {
     startBtn.disabled = true;
     startBtn.innerText = 'Memulai Kamera...';
@@ -180,6 +200,14 @@
 
       if (!html5QrCode) {
         html5QrCode = new Html5Qrcode("reader");
+      }
+
+      const cameraId = cameraSelect.value;
+      if (!cameraId) {
+        alert('Pilih kamera terlebih dahulu dari daftar!');
+        startBtn.disabled = false;
+        startBtn.innerText = 'Mulai Kamera';
+        return;
       }
 
       const config = { fps: 10, qrbox: { width: 220, height: 220 } };
@@ -210,8 +238,8 @@
         sendToServer(dataUrl, decodedText);
       };
 
-      // Langsung gunakan kamera belakang secara otomatis
-      await html5QrCode.start({ facingMode: "environment" }, config, qrCodeSuccessCallback, () => {});
+      // Mulai menggunakan ID kamera spesifik yang dipilih dari dropdown
+      await html5QrCode.start(cameraId, config, qrCodeSuccessCallback, () => {});
 
       setStatus('searching', 'Arahkan barcode ke kamera...', 'Siap memindai voucher');
       startBtn.innerText = 'Kamera Aktif';
@@ -281,6 +309,7 @@
   }
 
   startBtn.addEventListener('click', startScanner);
+  getCameras();
 })();
 </script>
 </body>
