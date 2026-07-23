@@ -14,18 +14,14 @@
   #app { display: grid; grid-template-columns: 1fr 340px; height: 100vh; }
   #stage { position: relative; display: flex; align-items: center; justify-content: center; background: #000; overflow: hidden; }
   
-  /* Area video preview */
-  #reader { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; position: relative;}
-  #reader video { max-width: 100%; max-height: 100%; object-fit: cover; }
-  
-  /* Overlay kotak panduan scan */
-  .scan-region-highlight { position: absolute; border: 3px solid var(--accent); border-radius: 12px; box-shadow: 0 0 10px var(--accent-dim); animation: pulse 1.5s infinite; }
-  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(53, 208, 127, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(53, 208, 127, 0); } 100% { box-shadow: 0 0 0 0 rgba(53, 208, 127, 0); } }
+  #reader { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; position: relative; }
+  #reader video { width: 100% !important; height: 100% !important; object-fit: cover !important; }
+  #reader__dashboard { display: none !important; }
 
-  #flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; transition: opacity 120ms ease-out; }
+  #flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; transition: opacity 120ms ease-out; z-index: 10; }
   #flash.on { opacity: 0.85; transition: none; }
 
-  #sidebar { background: var(--panel); border-left: 1px solid var(--border); display: flex; flex-direction: column; padding: 20px; gap: 16px; overflow-y: auto; }
+  #sidebar { background: var(--panel); border-left: 1px solid var(--border); display: flex; flex-direction: column; padding: 20px; gap: 16px; overflow-y: auto; z-index: 5; }
   h1 { font-size: 15px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); margin: 0 0 4px 0; font-weight: 600; }
   
   .status-card { background: #10131700; border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
@@ -77,7 +73,7 @@
         <div id="statusDot" class="dot searching"></div>
         <div>
           <div id="statusText">Arahkan barcode ke kamera...</div>
-          <div id="statusSub">Pindai QR/Barcode pada voucher untuk memulai</div>
+          <div id="statusSub">Tekan "Mulai Kamera" untuk aktifkan</div>
         </div>
       </div>
     </div>
@@ -111,7 +107,7 @@
 
 <script>
 (() => {
-  // GANTI DENGAN URL WEB APP GOOGLE APPS SCRIPT ANDA (berakhiran /exec)
+  // URL Web App Google Apps Script Anda sudah terpasang di sini
   const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxBoAKoG4riE271KF2k32HqR9vBoEIdC4DFV-TZw_Ez-6plTjqwQE7n0VEP_N3yLb8q/exec';
 
   const statusDot = document.getElementById('statusDot');
@@ -128,12 +124,10 @@
   let savedCount = 0;
   let audioCtx = null;
 
-  // Inisialisasi AudioContext untuk efek beep
   function initAudio() {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   }
 
-  // Fungsi efek suara beep pendek
   function beep() {
     try {
       initAudio();
@@ -147,7 +141,6 @@
     } catch (e) {}
   }
 
-  // Efek kilat layar kamera saat sukses
   function flash() {
     flashEl.classList.add('on');
     requestAnimationFrame(() => {
@@ -157,81 +150,79 @@
     });
   }
 
-  // Fungsi untuk memulai kamera dan scanner
+  async function getCameras() {
+    try {
+      const devices = await Html5Qrcode.getCameras();
+      cameraSelect.innerHTML = '';
+      if (devices && devices.length) {
+        devices.forEach((device, index) => {
+          const opt = document.createElement('option');
+          opt.value = device.id;
+          opt.textContent = device.label || `Kamera ${index + 1}`;
+          cameraSelect.appendChild(opt);
+        });
+      }
+    } catch (e) {}
+  }
+
   async function startScanner() {
     startBtn.disabled = true;
     startBtn.innerText = 'Memulai Kamera...';
 
     try {
-      // Hentikan scanner jika sedang berjalan
       if (html5QrCode && html5QrCode.isScanning) {
         await html5QrCode.stop();
       }
 
-      // Konfigurasi kamera (menggunakan kamera belakang)
-      const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+      if (!html5QrCode) {
+        html5QrCode = new Html5Qrcode("reader");
+      }
+
       const cameraId = cameraSelect.value;
+      const config = { fps: 10, qrbox: { width: 250, height: 250 } };
       
-      // Jika tidak ada kamera spesifik yang dipilih, gunakan kamera belakang default
-      const targetCamera = cameraId ? { exact: cameraId } : { facingMode: "environment" };
+      const qrCodeSuccessCallback = (decodedText, decodedResult) => {
+        if (isProcessing) return;
+        isProcessing = true;
 
-      // Memulai pemindaian
-      if (!html5QrCode) html5QrCode = new Html5Qrcode("reader");
-      await html5QrCode.start(
-        targetCamera, 
-        config, 
-        onScanSuccess, // Callback saat barcode ditemukan
-        onScanFailure  // Callback saat gagal membaca frame (abaikan)
-      );
+        beep();
+        flash();
+        setStatus('captured', 'Barcode terbaca!', 'Memproses data...');
 
-      captureBtnEnabledState(true);
-      setStatus('searching', 'Arahkan barcode ke kamera...', 'Tempatkan voucher di bawah tripod');
+        html5QrCode.pause();
+
+        const videoEl = document.querySelector('#reader video');
+        if (!videoEl) {
+          resumeScannerAfterCooldown();
+          return;
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = videoEl.videoWidth || 1280;
+        canvas.height = videoEl.videoHeight || 960;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        sendToServer(dataUrl, decodedText);
+      };
+
+      if (cameraId) {
+        await html5QrCode.start(cameraId, config, qrCodeSuccessCallback, () => {});
+      } else {
+        await html5QrCode.start({ facingMode: "environment" }, config, qrCodeSuccessCallback, () => {});
+      }
+
+      setStatus('searching', 'Arahkan barcode ke kamera...', 'Siap memindai voucher');
       startBtn.innerText = 'Kamera Aktif';
-
+      startBtn.disabled = false;
     } catch (err) {
       setStatus('error', 'Gagal mengakses kamera', err.message);
       startBtn.disabled = false;
-      startBtn.innerText = 'Mulai Ulang Kamera';
+      startBtn.innerText = 'Coba Lagi';
     }
   }
 
-  // Fungsi ini dipanggil SETIAP KALI barcode/QR code terbaca
-  function onScanSuccess(decodedText, decodedResult) {
-    // Mencegah pemrosesan ganda dalam jeda waktu pemrosesan server
-    if (isProcessing) return;
-    isProcessing = true;
-
-    beep(); // Suara pemicu
-    flash(); // Visual pemicu
-    
-    setStatus('captured', 'Barcode terbaca!', 'Memproses data...');
-    
-    // Hentikan pemindaian sementara agar server tidak terbebani saat pemrosesan
-    html5QrCode.pause();
-
-    // Ambil gambar terkini dari video stream untuk dikirim ke AI
-    // Kita akses elemen video langsung dari DOM yang dibuat oleh html5-qrcode
-    const videoEl = document.querySelector('#reader video');
-    if (!videoEl) {
-        console.error('Video element not found');
-        resumeScannerAfterCooldown();
-        return;
-    }
-    
-    const canvas = document.createElement('canvas');
-    canvas.width = videoEl.videoWidth;
-    canvas.height = videoEl.videoHeight;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-    
-    // Ubah ke format JPEG base64
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-    
-    // Kirim ke backend Google Apps Script
-    sendToServer(dataUrl, decodedText);
-  }
-
-  // Fungsi untuk mengirim gambar ke AI dan mencatat ke Sheets
   async function sendToServer(dataUrl, barcodeContent) {
     try {
       const res = await fetch(WEB_APP_URL, {
@@ -240,33 +231,58 @@
         body: JSON.stringify({ dataUrl: dataUrl, barcode: barcodeContent })
       });
       const json = await res.json();
-      
       if (json.status === 'success') {
         savedCount++;
         countEl.textContent = savedCount;
         setStatus('captured', 'Tersimpan!', `${json.nama} — ${json.no_hp}`);
         addLog({ status: 'ok', nama: json.nama, no_hp: json.no_hp });
       } else {
-        setStatus('error', 'Gagal membaca voucher', json.message || 'Coba ulangi scan');
+        setStatus('error', 'Gagal membaca voucher', json.message || 'Coba ulangi');
         addLog({ status: 'err', text: `Gagal: ${json.message || 'Error AI'} (Barcode: ${barcodeContent})` });
       }
     } catch (err) {
       setStatus('error', 'Koneksi ke server gagal', err.message);
       addLog({ status: 'err', text: 'Koneksi gagal: ' + err.message });
     } finally {
-      // Lanjutkan pemindaian setelah jeda singkat
       resumeScannerAfterCooldown();
     }
   }
 
-  // Menangani kegagalan baca frame (cukup log di console atau abaikan)
-  function onScanFailure(error) {
-    // Tidak perlu melakukan apa-apa, ini terjadi terus menerus saat mencari pola
-  }
-
-  // Menangani kamera sibuk atau gagal dimuat setelah jeda
   function resumeScannerAfterCooldown() {
     setTimeout(() => {
       isProcessing = false;
       if (html5QrCode && html5QrCode.isPaused) {
-        html5QrCode.
+        html5QrCode.resume();
+        setStatus('searching', 'Arahkan barcode berikutnya...', 'Siap memindai');
+      }
+    }, 2500);
+  }
+
+  function addLog(entry) {
+    const item = document.createElement('div');
+    item.className = 'log-item' + (entry.status === 'err' ? ' err' : '');
+    const time = new Date().toLocaleTimeString('id-ID');
+    if (entry.status === 'ok') {
+      item.innerHTML = `<div class="name">${escapeHtml(entry.nama || '-')}</div>
+        <div class="phone">${escapeHtml(entry.no_hp || '-')}</div>
+        <div class="time">${time}</div>`;
+    } else {
+      item.innerHTML = `<div class="name">${escapeHtml(entry.text || 'Info')}</div>
+        <div class="time">${time}</div>`;
+    }
+    logEl.prepend(item);
+    while (logEl.children.length > 20) logEl.removeChild(logEl.lastChild);
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  startBtn.addEventListener('click', startScanner);
+  getCameras();
+})();
+</script>
+</body>
+</html>
