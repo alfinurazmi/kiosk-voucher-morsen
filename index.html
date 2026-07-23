@@ -1,103 +1,416 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Kiosk Pemindai Voucher</title>
-  <style>
-    body { font-family: sans-serif; text-align: center; background: #f4f4f9; margin: 0; padding: 20px; }
-    h2 { color: #333; }
-    #video-container { position: relative; max-width: 400px; margin: 0 auto; background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
-    video { width: 100%; display: block; }
-    button { background: #28a745; color: white; border: none; padding: 12px 24px; font-size: 16px; border-radius: 8px; cursor: pointer; margin-top: 15px; font-weight: bold; width: 100%; max-width: 400px; }
-    button:active { background: #218838; }
-    button:disabled { background: #ccc; cursor: not-allowed; }
-    #result { margin-top: 20px; font-size: 16px; padding: 15px; border-radius: 8px; display: inline-block; width: 100%; max-width: 400px; box-sizing: border-box; }
-    .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-    .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-    .loading { color: #004085; background: #cce5ff; border: 1px solid #b8daff; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Kiosk Auto-Capture Voucher</title>
+<style>
+  :root {
+    --bg: #0e1013;
+    --panel: #171a1f;
+    --border: #2a2f37;
+    --accent: #35d07f;
+    --accent-dim: #1f7a4d;
+    --warn: #e0a63e;
+    --error: #e35b5b;
+    --text: #eef1f5;
+    --text-dim: #8b93a1;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    overflow: hidden;
+  }
+  #app {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    height: 100vh;
+  }
+  #stage {
+    position: relative;
+    display: flex; align-items: center; justify-content: center;
+    background: #000;
+    overflow: hidden;
+  }
+  video, canvas.overlay {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    max-width: 100%; max-height: 100%;
+  }
+  video { object-fit: contain; }
+  canvas.overlay { pointer-events: none; }
+
+  #flash {
+    position: absolute; inset: 0; background: #fff; opacity: 0;
+    pointer-events: none; transition: opacity 120ms ease-out;
+  }
+  #flash.on { opacity: 0.85; transition: none; }
+
+  #sidebar {
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    padding: 20px;
+    gap: 16px;
+    overflow-y: auto;
+  }
+  h1 {
+    font-size: 15px; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--text-dim); margin: 0 0 4px 0; font-weight: 600;
+  }
+  .status-card {
+    background: #10131700; border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px;
+  }
+  .status-row { display: flex; align-items: center; gap: 10px; }
+  .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--text-dim); flex-shrink: 0;
+    transition: background 150ms;
+  }
+  .dot.searching { background: var(--text-dim); }
+  .dot.locking { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
+  .dot.captured { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .dot.error { background: var(--error); box-shadow: 0 0 8px var(--error); }
+  #statusText { font-size: 14px; font-weight: 500; }
+  #statusSub { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+
+  .progress {
+    height: 4px; background: var(--border); border-radius: 4px; overflow: hidden; margin-top: 10px;
+  }
+  .progress-fill {
+    height: 100%; width: 0%; background: var(--warn); transition: width 60ms linear;
+  }
+
+  select, button {
+    font-family: inherit; font-size: 13px; padding: 10px 12px;
+    border-radius: 8px; border: 1px solid var(--border);
+    background: #1d2129; color: var(--text); cursor: pointer;
+  }
+  button.primary { background: var(--accent-dim); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.primary:hover { background: var(--accent); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  label.field { font-size: 12px; color: var(--text-dim); display: flex; flex-direction: column; gap: 6px; }
+
+  #log {
+    flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
+    min-height: 120px;
+  }
+  .log-item {
+    background: #1d2129; border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; font-size: 13px; animation: slideIn 200ms ease-out;
+  }
+  .log-item.err { border-color: var(--error); }
+  .log-item .name { font-weight: 600; }
+  .log-item .phone { color: var(--text-dim); }
+  .log-item .time { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+  @keyframes slideIn { from { opacity: 0; transform: translateY(-6px);} to { opacity: 1; transform: translateY(0);} }
+
+  #count { font-size: 28px; font-weight: 700; }
+  #countLabel { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+
+  @media (max-width: 860px) {
+    #app { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+    #sidebar { border-left: none; border-top: 1px solid var(--border); max-height: 40vh; }
+  }
+</style>
 </head>
 <body>
-
-  <h2>Kiosk Pemindai Voucher</h2>
-  
-  <div id="video-container">
-    <video id="camera" autoplay playsinline muted></video>
+<div id="app">
+  <div id="stage">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay" class="overlay"></canvas>
+    <div id="flash"></div>
   </div>
 
-  <button id="snapButton" onclick="captureAndSend()">Ambil Foto & Proses</button>
-  <div id="result"></div>
+  <div id="sidebar">
+    <h1>Kiosk Auto-Capture</h1>
 
-  <canvas id="canvas" style="display:none;"></canvas>
+    <div class="status-card">
+      <div class="status-row">
+        <div id="statusDot" class="dot searching"></div>
+        <div>
+          <div id="statusText">Mencari marker...</div>
+          <div id="statusSub">Letakkan voucher di bawah kamera</div>
+        </div>
+      </div>
+      <div class="progress"><div id="progressFill" class="progress-fill"></div></div>
+    </div>
 
-  <script>
-    // Ganti URL di bawah ini dengan URL Web App Google Apps Script Anda
-    const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxBoAKoG4riE271KF2k32HqR9vBoEIdC4DFV-TZw_Ez-6plTjqwQE7n0VEP_N3yLb8q/exec';
+    <label class="field">
+      Kamera
+      <select id="cameraSelect"></select>
+    </label>
 
-    const video = document.getElementById('camera');
-    const canvas = document.getElementById('canvas');
-    const snapButton = document.getElementById('snapButton');
-    const resultDiv = document.getElementById('result');
+    <label class="field">
+      Sensitivitas Marker (Threshold)
+      <input id="threshold" type="range" min="10" max="120" value="55">
+    </label>
 
-    // Aktifkan kamera belakang HP secara otomatis
-    async function startCamera() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
-        });
-        video.srcObject = stream;
-      } catch (err) {
-        resultDiv.className = 'error';
-        resultDiv.innerText = 'Gagal mengakses kamera: Pastikan izin kamera diaktifkan pada browser Anda.';
-      }
+    <div style="display:flex; gap:8px;">
+      <button id="startBtn" class="primary" style="flex:1;">Mulai Kamera</button>
+      <button id="captureBtn" style="flex:1;" disabled>Jepret Manual</button>
+    </div>
+
+    <div class="status-card" style="display:flex; justify-content:space-between; align-items:center;">
+      <div>
+        <div id="count">0</div>
+        <div id="countLabel">Voucher Tersimpan</div>
+      </div>
+      <div style="text-align:right; font-size:11px; color:var(--text-dim);">
+        Mode:<br>
+        <span style="color:var(--accent)">Auto-Capture Active</span>
+      </div>
+    </div>
+
+    <div style="font-size:12px; color:var(--text-dim); margin-top:4px;">Riwayat Terbaru</div>
+    <div id="log"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // Ganti URL di bawah ini dengan URL Web App Google Apps Script Anda (berakhiran /exec)
+  const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxBoAKoG4riE271KF2k32HqR9vBoEIdC4DFV-TZw_Ez-6plTjqwQE7n0VEP_N3yLb8q/exec';
+
+  const video = document.getElementById('video');
+  const overlay = document.getElementById('overlay');
+  const octx = overlay.getContext('2d', { willReadFrequently: true });
+  const flashEl = document.getElementById('flash');
+  const statusDot = document.getElementById('statusDot');
+  const statusText = document.getElementById('statusText');
+  const statusSub = document.getElementById('statusSub');
+  const progressFill = document.getElementById('progressFill');
+  const cameraSelect = document.getElementById('cameraSelect');
+  const thresholdInput = document.getElementById('threshold');
+  const startBtn = document.getElementById('startBtn');
+  const captureBtn = document.getElementById('captureBtn');
+  const countEl = document.getElementById('count');
+  const logEl = document.getElementById('log');
+
+  const STABLE_MS_REQUIRED = 500;
+  const SAMPLE_INTERVAL_MS = 80;
+  const COOLDOWN_MS = 2500;
+  const ROI = { xPct: 0.06, yPct: 0.10, wPct: 0.14, hPct: 0.14 };
+
+  let stream = null;
+  let stableSince = null;
+  let cooldownUntil = 0;
+  let savedCount = 0;
+  let sampleTimer = null;
+  let audioCtx = null;
+
+  async function listCameras() {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter(d => d.kind === 'videoinput');
+      cameraSelect.innerHTML = '';
+      cams.forEach((cam, i) => {
+        const opt = document.createElement('option');
+        opt.value = cam.deviceId;
+        opt.textContent = cam.label || `Kamera ${i + 1}`;
+        cameraSelect.appendChild(opt);
+      });
+    } catch (e) {}
+  }
+
+  async function startCamera() {
+    try {
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      const deviceId = cameraSelect.value;
+      const constraints = {
+        video: deviceId
+          ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 960 } }
+          : { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 960 } },
+        audio: false
+      };
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+      video.srcObject = stream;
+      await video.play();
+      await listCameras();
+      captureBtn.disabled = false;
+      setStatus('searching', 'Mencari marker...', 'Arahkan voucher ke kamera');
+      startDetectionLoop();
+    } catch (err) {
+      setStatus('error', 'Gagal mengakses kamera', err.message);
     }
+  }
 
-    startCamera();
+  startBtn.addEventListener('click', startCamera);
+  cameraSelect.addEventListener('change', startCamera);
 
-    function captureAndSend() {
-      if (!video.srcObject) {
-        alert('Kamera belum aktif!');
+  function setStatus(kind, text, sub) {
+    statusDot.className = 'dot ' + kind;
+    statusText.textContent = text;
+    if (sub !== undefined) statusSub.textContent = sub;
+  }
+
+  function beep() {
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.18);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.2);
+    } catch (e) {}
+  }
+
+  function flash() {
+    flashEl.classList.add('on');
+    requestAnimationFrame(() => {
+      flashEl.style.transition = 'opacity 250ms ease-out';
+      flashEl.classList.remove('on');
+      setTimeout(() => { flashEl.style.transition = ''; }, 260);
+    });
+  }
+
+  function drawRoiHint(vw, vh) {
+    overlay.width = vw;
+    overlay.height = vh;
+    octx.clearRect(0, 0, vw, vh);
+    const x = ROI.xPct * vw, y = ROI.yPct * vh, w = ROI.wPct * vw, h = ROI.hPct * vh;
+    octx.strokeStyle = 'rgba(53,208,127,0.7)';
+    octx.lineWidth = 2;
+    octx.setLineDash([6, 4]);
+    octx.strokeRect(x, y, w, h);
+  }
+
+  function sampleRoiDarkness(vw, vh) {
+    const x = Math.round(ROI.xPct * vw), y = Math.round(ROI.yPct * vh);
+    const w = Math.round(ROI.wPct * vw), h = Math.round(ROI.hPct * vh);
+    let data;
+    try {
+      data = octx.getImageData(x, y, w, h).data;
+    } catch (e) {
+      return null;
+    }
+    let sum = 0, n = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      n++;
+    }
+    return n ? sum / n : null;
+  }
+
+  function startDetectionLoop() {
+    if (sampleTimer) clearInterval(sampleTimer);
+    sampleTimer = setInterval(() => {
+      if (!video.videoWidth) return;
+      const vw = video.videoWidth, vh = video.videoHeight;
+      drawRoiHint(vw, vh);
+      octx.drawImage(video, 0, 0, vw, vh);
+      const darkness = sampleRoiDarkness(vw, vh);
+      drawRoiHint(vw, vh);
+
+      const now = performance.now();
+      if (now < cooldownUntil) {
+        setStatus('captured', 'Jeda setelah jepretan', 'Angkat voucher sebelumnya');
+        stableSince = null;
+        progressFill.style.width = '0%';
         return;
       }
 
-      snapButton.disabled = true;
-      snapButton.innerText = 'Memproses...';
-      resultDiv.className = 'loading';
-      resultDiv.innerText = 'Sedang membaca voucher dengan AI...';
+      const threshold = Number(thresholdInput.value);
+      const markerPresent = darkness !== null && darkness < threshold;
 
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-
-      fetch(WEB_APP_URL, {
-        method: 'POST',
-        body: JSON.stringify({ dataUrl: dataUrl })
-      })
-      .then(res => res.json())
-      .then(data => {
-        snapButton.disabled = false;
-        snapButton.innerText = 'Ambil Foto & Proses';
-
-        if (data.status === 'success') {
-          resultDiv.className = 'success';
-          resultDiv.innerHTML = `<b>Berhasil Disimpan!</b><br>Nama: ${data.nama}<br>No HP: ${data.no_hp}`;
-        } else {
-          resultDiv.className = 'error';
-          resultDiv.innerText = 'Gagal: ' + data.message;
+      if (markerPresent) {
+        if (stableSince === null) stableSince = now;
+        const elapsed = now - stableSince;
+        const pct = Math.min(100, (elapsed / STABLE_MS_REQUIRED) * 100);
+        progressFill.style.width = pct + '%';
+        setStatus('locking', 'Marker terdeteksi, menahan...', 'Jaga voucher tetap diam');
+        if (elapsed >= STABLE_MS_REQUIRED) {
+          triggerCapture(vw, vh);
         }
-      })
-      .catch(err => {
-        snapButton.disabled = false;
-        snapButton.innerText = 'Ambil Foto & Proses';
-        resultDiv.className = 'error';
-        resultDiv.innerText = 'Terjadi kesalahan koneksi ke server.';
-      });
-    }
-  </script>
+      } else {
+        stableSince = null;
+        progressFill.style.width = '0%';
+        setStatus('searching', 'Mencari marker...', 'Letakkan voucher di bawah kamera');
+      }
+    }, SAMPLE_INTERVAL_MS);
+  }
 
+  function triggerCapture(vw, vh) {
+    stableSince = null;
+    cooldownUntil = performance.now() + COOLDOWN_MS;
+    progressFill.style.width = '0%';
+    beep();
+    flash();
+    doCapture(vw, vh);
+  }
+
+  captureBtn.addEventListener('click', () => {
+    if (!video.videoWidth) return;
+    cooldownUntil = performance.now() + COOLDOWN_MS;
+    beep();
+    flash();
+    doCapture(video.videoWidth, video.videoHeight);
+  });
+
+  function doCapture(vw, vh) {
+    const shotCanvas = document.createElement('canvas');
+    shotCanvas.width = vw;
+    shotCanvas.height = vh;
+    const sctx = shotCanvas.getContext('2d');
+    sctx.drawImage(video, 0, 0, vw, vh);
+    const dataUrl = shotCanvas.toDataURL('image/jpeg', 0.85);
+    sendToServer(dataUrl);
+  }
+
+  async function sendToServer(dataUrl) {
+    setStatus('captured', 'Mengirim ke server...', 'Menunggu hasil AI...');
+    try {
+      const res = await fetch(WEB_APP_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ dataUrl: dataUrl })
+      });
+      const json = await res.json();
+      if (json.status === 'success') {
+        savedCount++;
+        countEl.textContent = savedCount;
+        setStatus('captured', 'Tersimpan!', `${json.nama} — ${json.no_hp}`);
+        addLog({ status: 'ok', nama: json.nama, no_hp: json.no_hp });
+      } else {
+        setStatus('error', 'AI gagal membaca voucher', json.message || 'Coba ulangi');
+        addLog({ status: 'err', text: json.message || 'Gagal membaca voucher.' });
+      }
+    } catch (err) {
+      setStatus('error', 'Koneksi ke server gagal', err.message);
+      addLog({ status: 'err', text: 'Koneksi gagal: ' + err.message });
+    }
+  }
+
+  function addLog(entry) {
+    const item = document.createElement('div');
+    item.className = 'log-item' + (entry.status === 'err' ? ' err' : '');
+    const time = new Date().toLocaleTimeString('id-ID');
+    if (entry.status === 'ok') {
+      item.innerHTML = `<div class="name">${escapeHtml(entry.nama || '-')}</div>
+        <div class="phone">${escapeHtml(entry.no_hp || '-')}</div>
+        <div class="time">${time}</div>`;
+    } else {
+      item.innerHTML = `<div class="name">${escapeHtml(entry.text || 'Info')}</div>
+        <div class="time">${time}</div>`;
+    }
+    logEl.prepend(item);
+    while (logEl.children.length > 20) logEl.removeChild(logEl.lastChild);
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  navigator.mediaDevices?.enumerateDevices().then(listCameras).catch(() => {});
+})();
+</script>
 </body>
 </html>
